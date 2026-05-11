@@ -200,9 +200,7 @@ import '../storage.dart';
       String baseUrl = url.replaceAll(RegExp(r'/login(\.aspx)?$', caseSensitive: false), '');
       baseUrl = baseUrl.replaceAll(RegExp(r'/MobileService\.svc$', caseSensitive: false), '');
 
-      if (baseUrl.toLowerCase().contains('uni-obuda.hu/hallgato')) {
-        baseUrl = baseUrl.replaceAll(RegExp(r'/hallgato', caseSensitive: false), '/ujhallgato');
-      }
+      // Path normalization for specific institutions is handled by the modern API detection below.
 
       if (containsAspx) {
         // Réginél nincs 2FA, ott marad a bool -> int konverzió
@@ -344,8 +342,217 @@ import '../storage.dart';
       return roundedDate.millisecondsSinceEpoch;
     }
   }
-  
-  class CalendarRequest{
+
+class CalendarRequest {
+  static String? _cachedTrainingId;
+
+  static Future<String?> getStudentTrainingId({bool forceRefresh = false}) async {
+    // ... Ez a függvény marad ugyanaz, ahogy nálad is van!
+    if (forceRefresh) {
+      _cachedTrainingId = null;
+    }
+    if (_cachedTrainingId != null) return _cachedTrainingId;
+    if (!(storage.DataCache.getIsModernApi() /*?? false*/)) return null;
+
+    try {
+      final token = await storage.DataCache.getAccessToken();
+      String baseUrl = storage.DataCache.getInstituteUrl() ?? '';
+      final url = Uri.parse("$baseUrl/api/Calendar/GetStudentTrainings");
+
+      final responseRaw = await _APIRequest.getRequest(url, bearerToken: token!);
+      final decoded = conv.json.decode(responseRaw);
+
+      if (decoded['data'] != null && decoded['data'].isNotEmpty) {
+        for (var training in decoded['data']) {
+          if (training['actualStudentTraining'] == true) {
+            _cachedTrainingId = training['studentTrainingId'];
+            return _cachedTrainingId;
+          }
+        }
+        _cachedTrainingId = decoded['data'][0]['studentTrainingId'];
+        return _cachedTrainingId;
+      }
+    } catch (e) { }
+    return null;
+  }
+
+  static List<CalendarEntry> getCalendarEntriesFromJSON(String jsonString) {
+    if (jsonString == '{}') return [];
+    final decoded = conv.json.decode(jsonString);
+    List<CalendarEntry> list = [];
+
+    // --- 1. MODERN API ÁG (Itt a belső formátumot dolgozzuk fel) ---
+    if (storage.DataCache.getIsModernApi() /*?? false*/) {
+      if (decoded['calendarData'] != null) {
+        for (var item in decoded['calendarData']) {
+          list.add(CalendarEntry.fromModern(
+            startEpoch: item['start_ms'],
+            endEpoch: item['end_ms'],
+            // ITT VISSZA KELL ÍRNI LOCATION-RE ÉS TITLE-RE, mert a makeCalendarRequest átnevezte őket!
+            location: item['location'] ?? "Nincs megadva",
+            title: item['title'] ?? "Nincs cím",
+            isExam: item['type'] == 1,
+            subjectCode: item['subjectCode'],
+            teacher: item['teacher'],
+            classInstanceId: item['classInstanceId'],
+          ));
+        }
+      }
+      return list;
+    }
+
+    // --- 2. RÉGI ÁG ---
+    if (decoded['calendarData'] != null) {
+      for (var item in decoded['calendarData']) {
+        String rawStart = item['start']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+        String rawEnd = item['end']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+
+        list.add(CalendarEntry(
+          rawStart.isEmpty ? '0' : rawStart,
+          rawEnd.isEmpty ? '0' : rawEnd,
+          item['location'] ?? "Nincs megadva",
+          item['title'] ?? "Nincs cím",
+          item['type'] == 1,
+        ));
+      }
+    }
+    return list;
+  }
+
+  static Future<String> makeCalendarRequest(String calendarJson) async {
+    if (storage.DataCache.getIsDemoAccount()! || storage.DataCache.getHasICSFile()!) {
+      return '{}';
+    }
+
+    if (storage.DataCache.getIsModernApi() /*?? false*/) {
+      try {
+        final oldPayload = conv.json.decode(calendarJson);
+        final startDateRaw = (oldPayload['startDate'] ?? oldPayload['StartDate']).toString();
+        final endDateRaw = (oldPayload['endDate'] ?? oldPayload['EndDate']).toString();
+
+        final numRegex = RegExp(r'\d+');
+        final startEpoch = int.parse(numRegex.firstMatch(startDateRaw)!.group(0)!);
+        final endEpoch = int.parse(numRegex.firstMatch(endDateRaw)!.group(0)!);
+
+        final startIso = DateTime.fromMillisecondsSinceEpoch(startEpoch).toIso8601String();
+        final endIso = DateTime.fromMillisecondsSinceEpoch(endEpoch).toIso8601String();
+
+        String baseUrl = storage.DataCache.getInstituteUrl() ?? '';
+        String responseRaw = "";
+        bool needsReAuth = false;
+
+        // SZŰRŐK BEOLVASÁSA (Ha még nincsenek elmentve, akkor true-t használunk)
+        bool dispClasses = storage.DataCache.getDisplayClasses() ?? true;
+        bool dispExams = storage.DataCache.getDisplayExams() ?? true;
+        bool dispPeriods = storage.DataCache.getDisplayPeriods() ?? true;
+
+        try {
+          final trainingId = await getStudentTrainingId(forceRefresh: false);
+          if (trainingId != null) {
+            final token = await storage.DataCache.getAccessToken();
+            // URL DINAMIKUS GENERÁLÁSA A SZŰRŐKKEL!
+            final url = Uri.parse("$baseUrl/api/Calendar/GetCalendarEvents?startDate=$startIso&endDate=$endIso&studentTrainingIds[0]=$trainingId&displayClasses=$dispClasses&displayExams=$dispExams&displayOnlineMeetings=false&displayOtherEvents=false&displayPeriods=$dispPeriods&displayTasks=false");
+
+            responseRaw = await _APIRequest.getRequest(url, bearerToken: token!);
+
+            if (responseRaw.contains('"statusCode":410') || responseRaw.contains('Authorization has been denied') || responseRaw.contains('"statusCode": 401')) {
+              needsReAuth = true;
+            }
+          } else {
+            needsReAuth = true;
+          }
+        } catch (e) {
+          needsReAuth = true;
+        }
+
+        if (needsReAuth) {
+          debug.log("Naptár: Lejárt token/ID érzékelve. Újra-azonosítás indul...");
+          final username = storage.DataCache.getUsername()!;
+          final password = storage.DataCache.getPassword()!;
+          await InstitutesRequest.validateLoginCredentialsUrl(baseUrl, username, password);
+
+          final newTrainingId = await getStudentTrainingId(forceRefresh: true);
+          if (newTrainingId == null) return '{"calendarData": []}';
+
+          final newToken = await storage.DataCache.getAccessToken();
+          // RETRY URL DINAMIKUS GENERÁLÁSA A SZŰRŐKKEL!
+          final retryUrl = Uri.parse("$baseUrl/api/Calendar/GetCalendarEvents?startDate=$startIso&endDate=$endIso&studentTrainingIds[0]=$newTrainingId&displayClasses=$dispClasses&displayExams=$dispExams&displayOnlineMeetings=false&displayOtherEvents=false&displayPeriods=$dispPeriods&displayTasks=false");
+
+          responseRaw = await _APIRequest.getRequest(retryUrl, bearerToken: newToken!);
+        }
+
+        final newApiData = conv.json.decode(responseRaw);
+        List<Map<String, dynamic>> mappedList = [];
+
+        if (newApiData['data'] != null) {
+          // Itt kezeljük, hogy egy elem, vagy lista jött-e (részletek vs. naptárnézet)
+          var dataPart = newApiData['data'];
+          Iterable items = dataPart is List ? dataPart : [dataPart];
+
+          for (var event in items) {
+            final eventStartEpoch = DateTime.parse(event['startDate']).millisecondsSinceEpoch;
+            final eventEndEpoch = DateTime.parse(event['endDate']).millisecondsSinceEpoch;
+
+            mappedList.add({
+              'start_ms': eventStartEpoch,
+              'end_ms': eventEndEpoch,
+              // ITT ALAKÍTJUK ÁT A Neptun tageket a sajátjainkká (location, title)!
+              'location': event['rooms'] ?? event['room'] ?? 'Nincs terem',
+              'title': event['name'] ?? event['subjectName'] ?? 'Ismeretlen',
+              'type': event['eventTypeId'] == 1 ? 1 : 0,
+              'subjectCode': event['courseCode'] ?? '-',
+              'teacher': event['courseTutor'] ?? 'Nincs megadva',
+              'classInstanceId': event['classInstanceId'] ?? '',
+            });
+          }
+        }
+        return conv.jsonEncode({"calendarData": mappedList});
+
+      } catch (e) {
+        debug.log("Naptár lekérési hiba: $e");
+        return '{"calendarData": []}';
+      }
+    } else {
+      // RÉGI API LOGIKA MARAD
+      final url = Uri.parse(storage.DataCache.getInstituteUrl()! + URLs.CALENDAR_URL);
+      final request = await _APIRequest.postRequest(url, calendarJson);
+      return request;
+    }
+  }
+
+// --- ÚJ FÜGGVÉNY A RÉSZLETEK LEKÉRÉSÉHEZ ---
+  static Future<Map<String, String>> getCourseDetails(String classInstanceId) async {
+    // Ha nem modern az API, akkor sajnos ezt a végpontot nem tudjuk használni
+    if (storage.DataCache.getIsModernApi() != true) {
+      return {"room": "Nem támogatott (Régi API)", "teacher": "Nem támogatott"};
+    }
+
+    try {
+      final token = await storage.DataCache.getAccessToken();
+      String baseUrl = storage.DataCache.getInstituteUrl() ?? '';
+
+      // Az általad kiszedett URL, benne a változóval!
+      final url = Uri.parse("$baseUrl/api/Calendar/GetCourseDetails?classInstanceId=$classInstanceId&webexMeetingId=null");
+
+      final responseRaw = await _APIRequest.getRequest(url, bearerToken: token!);
+      final decoded = conv.json.decode(responseRaw);
+
+      if (decoded['data'] != null) {
+        // Visszaadjuk a két legfontosabb adatot egy Map-ben
+        return {
+          "room": decoded['data']['room'] ?? "Nincs terem",
+          "teacher": decoded['data']['courseTutor'] ?? "Nincs tanár",
+        };
+      }
+    } catch (e) {
+      debug.log("Hiba az óra részleteinek lekérésekor: $e");
+    }
+    return {"room": "Hiba a betöltésnél", "teacher": "Hiba a betöltésnél"};
+  }
+
+
+
+  /*class CalendarRequest{
 
     static String? _cachedTrainingId;
 
@@ -356,7 +563,7 @@ import '../storage.dart';
       }
 
       if (_cachedTrainingId != null) return _cachedTrainingId;
-      if (!(storage.DataCache.getIsModernApi() /*?? false*/)) return null;
+      if (!(storage.DataCache.getIsModernApi() *//*?? false*//*)) return null;
 
       try {
         final token = await storage.DataCache.getAccessToken();
@@ -385,13 +592,13 @@ import '../storage.dart';
       if (jsonString == '{}') return [];
       final decoded = conv.json.decode(jsonString);
       List<CalendarEntry> list = [];
-      if (storage.DataCache.getIsModernApi() /*?? false*/) {
+      if (storage.DataCache.getIsModernApi() *//*?? false*//*) {
         if (decoded['calendarData'] != null) {
           for (var item in decoded['calendarData']) {
             list.add(CalendarEntry.fromModern(
               startEpoch: item['start_ms'],
               endEpoch: item['end_ms'],
-              location: item['location'],
+              location: item['rooms'],
               title: item['name'],
               isExam: item['type'] == 1,
               subjectCode: item['subjectCode'],
@@ -415,7 +622,7 @@ import '../storage.dart';
       }
       return list;
     }
-/*    static List<CalendarEntry> getCalendarEntriesFromJSON(String jsonString) {
+*//*    static List<CalendarEntry> getCalendarEntriesFromJSON(String jsonString) {
       if (jsonString == '{}' || jsonString.isEmpty) return [];
 
       final decoded = conv.json.decode(jsonString);
@@ -459,7 +666,7 @@ import '../storage.dart';
         }
       }
       return list;
-    }*/
+    }*//*
 
 
     static Future<String> makeCalendarRequest(String calendarJson) async {
@@ -467,7 +674,7 @@ import '../storage.dart';
         return '{}';
       }
 
-      if (storage.DataCache.getIsModernApi() /*?? false*/) {
+      if (storage.DataCache.getIsModernApi() *//*?? false*//*) {
         try {
           final oldPayload = conv.json.decode(calendarJson);
           final startDateRaw = (oldPayload['startDate'] ?? oldPayload['StartDate']).toString();
@@ -560,7 +767,7 @@ import '../storage.dart';
         final request = await _APIRequest.postRequest(url, calendarJson);
         return request;
       }
-    }
+    }*/
 
 
     static String getCalendarOneWeekJSON(String username, String password, int weekOffset){
@@ -1024,6 +1231,7 @@ class CalendarEntry {
   late bool isExam;
   late String subjectCode;
   late String teacher;
+  late String? classInstanceId;
 
   // RÉGI API KONSTRUKTOR
   CalendarEntry(String start, String end, String loc, String rawTitle, this.isExam) {
@@ -1070,6 +1278,7 @@ class CalendarEntry {
     required this.isExam,
     required this.subjectCode,
     required this.teacher,
+    this.classInstanceId,
   });
 
   @override
@@ -1702,14 +1911,14 @@ class CalendarEntry {
   class NeptunCerts extends HttpOverrides {
     static NeptunCerts? _instance;
     static bool hasValidCertificate = true;
-  
+
     static NeptunCerts getCerts(){
       if(_instance != null){
         return _instance!;
       }
       return NeptunCerts();
     }
-  
+
     NeptunCerts(){
       _instance = this;
     }

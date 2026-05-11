@@ -120,6 +120,15 @@ class DataCache{
     await saveInt('IsModernApi', value ? 1 : 0);
   }
 
+  Future<void> saveBool(String key, bool value) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
+  }
+
+  Future<bool?> getBool(String key) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(key);
+  }
 
   late bool? _persistentSetting_familyFriendlyLoadingComments = false;
   late bool? _persistentSetting_showExamNotifications = true;
@@ -541,4 +550,33 @@ class DataCache{
     _instance._icsIsUploaded = value ?? false;
     await saveInt('ICS_HasIcsUpload', value != null && value != 0 ? 1 : 0);
   }
+  // --- NAPTÁR SZŰRŐK ---
+// --- NAPTÁR SZŰRŐK ---
+  // Saját memóriaváltozók, hogy ne kelljen a _prefs-re támaszkodni
+  static bool? _displayClasses = true;
+  static bool? _displayExams = true;
+  static bool? _displayPeriods = true;
+
+  static bool? getDisplayClasses() => _displayClasses;
+  static Future<void> setDisplayClasses(bool? value) async {
+    _displayClasses = value ?? true;
+    // Saját mentés közvetlenül a SharedPreferences-be (nem kell hozzá saveBool)
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('CALENDAR_DisplayClasses', _displayClasses!);
+  }
+
+  static bool? getDisplayExams() => _displayExams;
+  static Future<void> setDisplayExams(bool? value) async {
+    _displayExams = value ?? true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('CALENDAR_DisplayExams', _displayExams!);
+  }
+
+  static bool? getDisplayPeriods() => _displayPeriods;
+  static Future<void> setDisplayPeriods(bool? value) async {
+    _displayPeriods = value ?? true;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('CALENDAR_DisplayPeriods', _displayPeriods!);
+  }
+
 }
