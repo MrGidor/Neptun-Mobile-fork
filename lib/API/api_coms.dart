@@ -16,15 +16,15 @@ import '../storage.dart';
   
   class URLs{
     static const String INSTITUTIONS_URL = "https://mobilecloudservice.cloudapp.net/MobileServiceLib/MobileCloudService.svc/GetAllNeptunMobileUrls";
-    static const String TRAININGS_URL = "/GetTrainings";
-    static const String CALENDAR_URL = "/GetCalendarData";
-    static const String PERIODTERMS_URL = "/GetPeriodTerms";
-    static const String PERIODS_URL = "/GetPeriods";
-    static const String GETCASHIN_URL = "/GetCashinData";
-    static const String CURRICULUMS_URL = "/GetCurriculums";
-    static const String MARKBOOK_URL = "/GetMarkbookData";
-    static const String MESSAGES_URL = "/GetMessages";
-    static const String MESSAGE_SET_READ = "/SetReadedMessage";
+    static const String TRAININGS_URL = "/api/GetTrainings";
+    static const String CALENDAR_URL = "/api/GetCalendarData";
+    static const String PERIODTERMS_URL = "/api/GetPeriodTerms";
+    static const String PERIODS_URL = "/api/GetPeriods";
+    static const String GETCASHIN_URL = "/api/GetCashinData";
+    static const String CURRICULUMS_URL = "/api/GetCurriculums";
+    static const String MARKBOOK_URL = "/api/GetMarkbookData";
+    static const String MESSAGES_URL = "/api/GetMessages";
+    static const String MESSAGE_SET_READ = "/api/SetReadedMessage";
   }
   
   class _APIRequest{
@@ -380,48 +380,11 @@ import '../storage.dart';
       } catch (e) { }
       return null;
     }
-    //
-
-    /* stable build code
-    static Future<String?> getStudentTrainingId() async {
-      // Ha már egyszer lekérte, azonnal visszaadja a memóriából
-      if (_cachedTrainingId != null) return _cachedTrainingId;
-
-      // Ha régi Neptunt használ a diák (pl. BME), akkor ez az egész nem kell
-      if (!storage.DataCache.getIsModernApi()) return null;
-
-      try {
-        final token = await storage.DataCache.getAccessToken();
-        final url = Uri.parse(storage.DataCache.getInstituteUrl()! + "/api/Calendar/GetStudentTrainings");
-
-        // Itt a tegnap megírt új GET metódusunkat használjuk!
-        final responseRaw = await _APIRequest.getRequest(url, bearerToken: token!);
-        final decoded = conv.json.decode(responseRaw);
-
-        if (decoded['data'] != null && decoded['data'].isNotEmpty) {
-          // Megkeressük az "Aktuális" félévhez tartozó képzést
-          for (var training in decoded['data']) {
-            if (training['actualStudentTraining'] == true) {
-              _cachedTrainingId = training['studentTrainingId'];
-              return _cachedTrainingId;
-            }
-          }
-          // Ha valamiért nincs megjelölve, visszaadjuk az elsőt a listából
-          _cachedTrainingId = decoded['data'][0]['studentTrainingId'];
-          return _cachedTrainingId;
-        }
-      } catch (e) {
-        AppAnalitics.sendAnaliticsData(AppAnalitics.ERROR, 'api_coms.dart => getStudentTrainingId() Error: $e');
-      }
-      return null;
-    }*/
 
     static List<CalendarEntry> getCalendarEntriesFromJSON(String jsonString) {
       if (jsonString == '{}') return [];
-
       final decoded = conv.json.decode(jsonString);
       List<CalendarEntry> list = [];
-
       if (storage.DataCache.getIsModernApi() /*?? false*/) {
         if (decoded['calendarData'] != null) {
           for (var item in decoded['calendarData']) {
@@ -452,7 +415,51 @@ import '../storage.dart';
       }
       return list;
     }
+/*    static List<CalendarEntry> getCalendarEntriesFromJSON(String jsonString) {
+      if (jsonString == '{}' || jsonString.isEmpty) return [];
 
+      final decoded = conv.json.decode(jsonString);
+      List<CalendarEntry> list = [];
+
+      // --- 1. MODERN API ÁG (Óbuda, Semmelweis, GDE) ---
+      // A feltöltött fájlok alapján itt a fő kulcs a 'data'
+      if (decoded['data'] != null) {
+        for (var item in decoded['data']) {
+          // Dátumok átalakítása ISO szövegből epoch-ra
+          int startMs = DateTime.parse(item['startDate']).millisecondsSinceEpoch;
+          int endMs = DateTime.parse(item['endDate']).millisecondsSinceEpoch;
+
+          list.add(CalendarEntry.fromModern(
+            startEpoch: startMs,
+            endEpoch: endMs,
+            location: item['rooms'] ?? "Nincs megadva",
+            title: item['name'] ?? "Nincs cím",
+            isExam: item['eventTypeId'] == 1,
+            subjectCode: item['courseCode'],
+            teacher: item['courseTutor'],
+          ));
+        }
+        // NE tegyél ide 'return list'-et, mert akkor a régi ág sosem fut le!
+      }
+      if (decoded['calendarData'] != null) {
+        for (var item in decoded['calendarData']) {
+
+          // 1. Kiszedjük a dátumokat, és ha null, üres stringet adunk
+          String rawStart = item['start']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+          String rawEnd = item['end']?.toString().replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+
+          list.add(CalendarEntry(
+          //2. Ha az eredmény teljesen üres maradt, akkor '0'-t küldünk be, így a parse nem omlik össze!
+          rawStart.isEmpty ? '0' : rawStart,
+          rawEnd.isEmpty ? '0' : rawEnd,
+          item['location'] ?? "Nincs megadva",
+          item['title'] ?? "Nincs cím",
+          item['type'] == 1,
+          ));
+        }
+      }
+      return list;
+    }*/
 
 
     static Future<String> makeCalendarRequest(String calendarJson) async {
@@ -484,7 +491,7 @@ import '../storage.dart';
             final trainingId = await getStudentTrainingId(forceRefresh: false);
             if (trainingId != null) {
               final token = await storage.DataCache.getAccessToken();
-              final url = Uri.parse("$baseUrl/api/Calendar/GetCalendarEvents?startDate=$startIso&endDate=$endIso&studentTrainingIds[0]=$trainingId&displayClasses=true&displayExams=true&displayOnlineMeetings=true&displayOtherEvents=true&displayPeriods=true&displayTasks=true");
+              final url = Uri.parse("$baseUrl/api/Calendar/GetCalendarEvents?startDate=$startIso&endDate=$endIso&studentTrainingIds[0]=$trainingId&displayClasses=true&displayExams=true&displayOnlineMeetings=false&displayOtherEvents=false&displayPeriods=true&displayTasks=false");
 
               responseRaw = await _APIRequest.getRequest(url, bearerToken: token!);
 
@@ -1172,7 +1179,7 @@ class CalendarEntry {
         return this;
       }
       name = data[0];
-      startEpoch = int.parse(data[1]);
+      startEpoch = int.tryParse(data[1]) ?? 0;
       endEpoch = int.parse(data[2]);
       partofSemester = int.parse(data[3]);
       fillIsActiveStatus();
