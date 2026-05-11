@@ -1,7 +1,7 @@
-# Neptun 2
+# Neptun Mobile
 
-Egy alternatív alkalmazás, a hivatalos Neptun mobilapp helyett. 📱 Neptun 2 alkalmazás frissítése
-Minden lényeges funkció benne van, ami csak kellhet az egyetemi évek során, így nem kell a webes neptunt sem használni! 🥳
+Neptun Mobil alkalmazás, a Neptun 2 újragondolása a modern neptun backend-hez.
+Így ritkán kell a webes felületet használni
 
 Funkciók:
 - Szellemjegyek 👻 Könnyebben megy majd az átlagszámítás!
