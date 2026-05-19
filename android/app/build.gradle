@@ -56,6 +56,7 @@ android {
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        setProperty("archivesBaseName", "Neptun_Mobile")
     }
 
     signingConfigs {
@@ -81,11 +82,38 @@ android {
         }
     }
 
-    dependencies {
-        coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
-        implementation 'androidx.window:window:1.0.0'
-        implementation 'androidx.window:window-java:1.0.0'
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            // Csak a release buildeket nevezzük át
+            if (variant.buildType.name == "release") {
+                // Megnézzük, melyik ABI (architektúra) épp a soros
+                def abiFilter = output.getFilter(com.android.build.OutputFile.ABI)
+                def customName = ""
+
+                if (abiFilter == "armeabi-v7a") {
+                    customName = "Neptun_Mobile_ARM7.apk"
+                } else if (abiFilter == "arm64-v8a") {
+                    customName = "Neptun_Mobile_ARM8.apk"
+                } else if (abiFilter == "x86_64") {
+                    customName = "Neptun_Mobile_x86_64.apk" // Ha esetleg ezt is buildelnéd
+                } else {
+                    // Fallback, ha valami más jönne ki (pl. universal apk)
+                    customName = "Neptun_Mobile_Universal.apk"
+                }
+
+                // Csak akkor nevezzük át, ha meg tudtuk határozni az ABI-t
+                if (abiFilter != null) {
+                    outputFileName = customName
+                }
+            }
+        }
     }
+
+}
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+    implementation 'androidx.window:window:1.0.0'
+    implementation 'androidx.window:window-java:1.0.0'
 }
 
 flutter {
