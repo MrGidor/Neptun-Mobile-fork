@@ -14,7 +14,7 @@ Funkciók:
 
 Az alkalmazás még fejlesztés alatt áll, így ez még nem tökéletes. ⚠️
 Az alkalmazás alapjainak fejlesztőjét itt megtalálod! Hatalmas pacsi neki az eddigi rendszer biztosításáért! https://github.com/domedav/Neptun-2
-
+# KNOWN ISSUES: https://github.com/zoligamer/Neptun-Mobile-fork/blob/main/KNOWN_ISSUES.md
 ## 1.0.0
 Órarend fül, bejelentkezés alapok
 ## 1.0.2
