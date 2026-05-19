@@ -1,5 +1,5 @@
 # Neptun Mobile
-
+# Itt tudjátok letölteni: https://github.com/zoligamer/Neptun-Mobile-fork/releases
 Neptun Mobil alkalmazás, a Neptun 2 újragondolása a modern neptun backend-hez.
 Így ritkán kell a webes felületet használni
 
