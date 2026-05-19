@@ -17,3 +17,7 @@ Az alkalmazás alapjainak fejlesztőjét itt megtalálod! Hatalmas pacsi neki az
 
 ## 1.0.0
 Órarend fül, bejelentkezés alapok
+## 1.0.2
+Egész oldalmenü újraalkotása, órarend újraalkotása, kisegítő lehetőségek fejlesztése
+
+##**Bug report oldal github nélküli felhasználóknak: https://kuci.mludio.my.id/index.html**
